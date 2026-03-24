@@ -9,6 +9,8 @@ import pandas as pd
 from websocket import create_connection
 import requests
 import json
+import rookiepy 
+
 
 logger = logging.getLogger(__name__)
 
@@ -36,51 +38,87 @@ class TvDatafeed:
     __signin_headers = {'Referer': 'https://www.tradingview.com'}
     __ws_timeout = 5
 
-    def __init__(
-        self,
-        username: str = None,
-        password: str = None,
-    ) -> None:
-        """Create TvDatafeed object
-
-        Args:
-            username (str, optional): tradingview username. Defaults to None.
-            password (str, optional): tradingview password. Defaults to None.
-        """
+    def __init__(self, username=None, password=None, auto_login=True, chromedriver_path=None, cookies=None) -> None:
+        
+        try: 
+            # 1. Get cookies from your browser
+            if cookies is None:
+                basecookies = rookiepy.brave(['https://www.tradingview.com','https://www.in.tradingview.com'])
+                print(basecookies)
+                cookies = rookiepy.to_cookiejar(basecookies)
+                print(cookies)
+        except Exception as e:
+            print(f"Error obtaining cookies: {e}")
+            import traceback
+            traceback.print_exc()
+            cookies = None
 
         self.ws_debug = False
+        self.session = requests.Session()
 
+        # 1. Load cookies into the session if provided
+        if cookies:
+            self.session.cookies.update(cookies)
+            print(f"Cookies manually loaded into session. {cookies}")
+
+        # 2. Pass session to auth to extract token from cookies or login
         self.token = self.__auth(username, password)
 
+        print(f" TOKEN : {self.token}")
         if self.token is None:
             self.token = "unauthorized_user_token"
-            logger.warning(
-                "you are using nologin method, data you access may be limited"
-            )
 
         self.ws = None
-        self.session = self.__generate_session()
+        # Note: self.session is overwritten by a string in the original library 
+        # (which is a bug in the original code, but we will keep it for compatibility)
+        self.ws = None
+        self.session_id = self.__generate_session() 
         self.chart_session = self.__generate_chart_session()
 
-    def __auth(self, username, password):
 
+    def __auth(self, username, password):
+        # Check if we already have a sessionid cookie from rookiepy
+        sessionid = self.session.cookies.get('sessionid', domain='.tradingview.com')
+        print(" __AUTH -------------------")
         if (username is None or password is None):
-            token = None
+            # If no credentials, try to fetch the token using existing session cookies
+            print(f" sessionid = {sessionid}")
+            if sessionid:
+                try:
+                    # Request the user config page to get the auth_token
+                    response = self.session.get("https://www.tradingview.com")
+                    print("------------------FINDING auth_token in page response -------------")
+                    # If it returns plain text token or JSON, handle here:
+                    # print(response.text)
+                     # Use Regex to find the value after "auth_token":"
+                    # This looks for the long JWT string inside the " " quotes
+                    match = re.search(r'"auth_token":"([^"]+)"', response.text)
+                    
+                    if match:
+                        token = match.group(1)
+                        print(f"Successfully extracted token: {token[:10]}...")
+                        return token
+                    else:
+                        logger.error("Could not find auth_token in the page HTML")
+                        return None
+                except Exception as e:
+                    logger.error(f"Error during token extraction: {e}")
+                    return None
+            return None 
 
         else:
-            data = {"username": username,
-                    "password": password,
-                    "remember": "on"}
+            # Standard login logic
+            print("Standard LOGIN TRY ----------???")
+            data = {"username": username, "password": password, "remember": "on"}
             try:
-                response = requests.post(
+                response = self.session.post(
                     url=self.__sign_in_url, data=data, headers=self.__signin_headers)
                 token = response.json()['user']['auth_token']
+                return token
             except Exception as e:
                 logger.error('error while signin')
-                token = None
-
-        return token
-
+                return None
+    
     def __create_connection(self):
         logging.debug("creating websocket connection")
         self.ws = create_connection(
@@ -133,13 +171,13 @@ class TvDatafeed:
     @staticmethod
     def __create_df(raw_data, symbol):
         try:
-            out = re.search('"s":\[(.+?)\}\]', raw_data).group(1)
+            out = re.search('"s":\\[(.+?)\\}\\]', raw_data).group(1)
             x = out.split(',{"')
             data = list()
             volume_data = True
 
             for xi in x:
-                xi = re.split("\[|:|,|\]", xi)
+                xi = re.split("\\[|:|,|\\]", xi)
                 ts = datetime.datetime.fromtimestamp(float(xi[4]))
 
                 row = [ts]
@@ -167,7 +205,7 @@ class TvDatafeed:
             data.insert(0, "symbol", value=symbol)
             return data
         except AttributeError:
-            logger.error("no data, please check the exchange and symbol")
+            logger.error(f"no data, please check the exchange and symbol: {symbol}")
 
     @staticmethod
     def __format_symbol(symbol, exchange, contract: int = None):
@@ -207,21 +245,30 @@ class TvDatafeed:
         Returns:
             pd.Dataframe: dataframe with sohlcv as columns
         """
+        #TRIM spaces around symbol and convert to caps
+        symbol = symbol.capitalize()
+        symbol= symbol.strip()
+        #if symbol contains :
+        if ":" in symbol :
+        # if symbol.startswith("NSE:") or symbol.startswith("BSE:") or symbol.startswith("MCX:") or symbol.startswith("NFO:") or symbol.ha:
+            exchange = (symbol.split(":")[0]).strip()
+            symbol = (symbol.split(":")[1]).strip()
         symbol = self.__format_symbol(
             symbol=symbol, exchange=exchange, contract=fut_contract
         )
-
+        print(f"Formatted symbol: {symbol}")
+        logger.info(f"Formatted symbol: {symbol}")
         interval = interval.value
 
         self.__create_connection()
 
         self.__send_message("set_auth_token", [self.token])
         self.__send_message("chart_create_session", [self.chart_session, ""])
-        self.__send_message("quote_create_session", [self.session])
+        self.__send_message("quote_create_session", [self.session_id])
         self.__send_message(
             "quote_set_fields",
             [
-                self.session,
+                self.session_id,
                 "ch",
                 "chp",
                 "current_session",
@@ -249,10 +296,10 @@ class TvDatafeed:
         )
 
         self.__send_message(
-            "quote_add_symbols", [self.session, symbol,
+            "quote_add_symbols", [self.session_id, symbol,
                                   {"flags": ["force_permission"]}]
         )
-        self.__send_message("quote_fast_symbols", [self.session, symbol])
+        self.__send_message("quote_fast_symbols", [self.session_id, symbol])
 
         self.__send_message(
             "resolve_symbol",
@@ -291,7 +338,7 @@ class TvDatafeed:
 
     def search_symbol(self, text: str, exchange: str = ''):
         url = self.__search_url.format(text, exchange)
-
+        print(" search --")
         symbols_list = []
         try:
             resp = requests.get(url)
@@ -299,6 +346,8 @@ class TvDatafeed:
             symbols_list = json.loads(resp.text.replace(
                 '</em>', '').replace('<em>', ''))
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             logger.error(e)
 
         return symbols_list

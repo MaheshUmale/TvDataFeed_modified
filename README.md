@@ -2,6 +2,11 @@
 
 `tvDatafeed` is a Python library for fetching historical and live data from TradingView using a websocket connection. It allows you to access data for a wide range of symbols across different exchanges, including stocks, indices, futures, and options.
 
+
+
+pip install --upgrade --no-cache-dir git+https://github.com/MaheshUmale/TvDataFeed_modified.git
+
+
 ## Features
 
 - **Historical Data**: Fetch historical OHLCV data for any symbol on TradingView.

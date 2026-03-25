@@ -352,6 +352,45 @@ class TvDatafeedLive(tvDatafeed.TvDatafeed):
         self._lock.release()
         
         return consumer 
+
+    def subscribe(self, symbol, exchange, interval, callback, timeout=-1):
+        '''
+        Subscribe to a live feed for a symbol in a single step
+
+        The user provides symbol, exchange, interval and callback.
+        This method creates the Seis and the Consumer in one go.
+
+        Parameters
+        ----------
+        symbol : str
+            ticker string for symbol
+        exchange : str
+            exchange where symbol is listed
+        interval : tvDatafeed.Interval
+            chart interval
+        callback : func
+            Callback function to be called when new data bar is available
+        timeout : int, optional
+            maximum time to wait in seconds for return, default
+            is -1 (blocking)
+
+        Returns
+        ----------
+        Consumer
+            The created consumer object. If timeout was specified and
+            expired then False will be returned.
+
+        Raises
+        ----------
+        ValueError
+            If provided symbol and exchange combination is
+            not listed on TradingView
+        '''
+        seis = self.new_seis(symbol, exchange, interval, timeout)
+        if seis is False:
+            return False
+
+        return self.new_consumer(seis, callback, timeout)
     
     def del_consumer(self, consumer, timeout=-1): 
         '''

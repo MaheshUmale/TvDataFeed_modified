@@ -82,11 +82,14 @@ def my_callback(seis, data):
 
 tv_live = TvDatafeedLive()
 
-# Create a 'Seis' (Symbol-Exchange-Interval Set)
-nifty_seis = tv_live.new_seis('NIFTY', 'NSE', Interval.in_1_minute)
+# Simple one-line subscription
+tv_live.subscribe('NIFTY', 'NSE', Interval.in_1_minute, my_callback)
 
-# Register a consumer with the callback
-tv_live.new_consumer(nifty_seis, my_callback)
+# Alternatively, manual steps for more control:
+# 1. Create a 'Seis' (Symbol-Exchange-Interval Set)
+# nifty_seis = tv_live.new_seis('NIFTY', 'NSE', Interval.in_1_minute)
+# 2. Register a consumer with the callback
+# tv_live.new_consumer(nifty_seis, my_callback)
 
 # The live feed runs in a separate thread. 
 # Keep the main thread alive.
